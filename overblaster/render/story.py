@@ -693,10 +693,6 @@ def draw_intro(d: Draw, game, draw_playfield: Callable) -> None:
             ctx.global_alpha = min(1, p * 6)
             d.draw_rock(320 + math.cos(a) * r, 320 + math.sin(a) * r, 4 + sz * p * p, rot + t * 1.5, PINK, True, False, False)
             ctx.restore()
-    fl = 0.95 * ramp(t, 13.9 + SH, 14.3 + SH) * (1 - ramp(t, 14.3 + SH, 15.0 + SH))
-    if fl > 0:
-        ctx.fill_style = f"rgba(255,255,255,{fl})"
-        ctx.fill_rect(-game.ox, 0, W + 2 * game.ox, W)  # the flash covers the whole screen, bars or not
     # the narrator's captions: at the top over the bridge, at the bottom over the map
     for k, l in enumerate(INTRO_LINES):
         if l[0] <= t < l[1]:
