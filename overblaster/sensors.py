@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Deque, Optional, Sequence, Tuple
 
 from . import config as C
-from .game import _clamp, wrap_az
+from .core.math_ import clamp as _clamp, wrap360 as wrap_az
 
 
 def as_vec3(value) -> Optional[Tuple[float, float, float]]:

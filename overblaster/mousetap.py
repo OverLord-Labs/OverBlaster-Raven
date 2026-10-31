@@ -15,14 +15,19 @@ from PySide6.QtWidgets import QWidget
 
 
 class MouseTap(QObject):
-    def __init__(self, owner: QWidget, on_move) -> None:
+    def __init__(self, owner: QWidget, on_move, on_press=None) -> None:
         super().__init__(owner)
         self._owner = owner
         self._on_move = on_move
+        self._on_press = on_press  # a click (left button) at (x, y) in the owner's coordinates
 
     def eventFilter(self, obj, event) -> bool:
-        if event.type() == QEvent.Type.MouseMove and isinstance(obj, QWidget):
+        kind = event.type()
+        if kind in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) and isinstance(obj, QWidget):
             if obj is self._owner or self._owner.isAncestorOf(obj):
                 p = obj.mapTo(self._owner, event.position().toPoint())
-                self._on_move(p.x(), p.y())
+                if kind == QEvent.Type.MouseMove:
+                    self._on_move(p.x(), p.y())
+                elif self._on_press is not None:
+                    self._on_press(p.x(), p.y())
         return False  # only watching: never consume the event

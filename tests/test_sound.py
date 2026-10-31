@@ -3,7 +3,8 @@ import os
 import numpy as np
 import pytest
 
-from overblaster import audio, config as C, sound, synth, voicelines
+from overblaster import audio, config as C, sound, synth
+from overblaster.core import MAX_LEVEL, level_say
 
 SR = synth.SR
 
@@ -16,14 +17,14 @@ def test_every_clip_the_game_can_ask_for_exists_in_assets():
     bank = audio.Bank()
     missing = [n for n in (
         [f"sfx_{k}" for k in synth.SFX] + [f"sfx_charge_{i}" for i in range(synth.CHARGE_TICKS)]
-        + ["music_game", "music_title"] + [f"voice_{k}" for k in voicelines.all_clips()]
+        + ["music_game"] + [f"voice_{k}" for n in range(1, MAX_LEVEL + 1) for k in level_say(n)]
     ) if bank.get(n) is None]
     assert not missing, missing
 
 
 def test_clips_are_the_right_loudness_and_length():
     bank = audio.Bank()
-    for k in voicelines.all_clips():
+    for k in sorted({k for n in range(1, MAX_LEVEL + 1) for k in level_say(n)} | {"level_clear", "continue", "chip_seen", "chip_found", "hull_destroyed", "battery_dead", "battery_low"}):
         x = bank.get(f"voice_{k}")
         assert 0.4 < len(x) / SR < 5.0 and 0.5 < float(np.abs(x).max()) <= 1.0, k
 
@@ -41,28 +42,43 @@ def test_an_unknown_clip_is_ignored_not_fatal():
     assert s.mixer.active_effects == 0 and not s.speaking
 
 
+def test_a_voice_line_skips_a_missing_clip_and_still_says_the_rest():
+    s = make()
+    s.say("level_word", "no_such_voice", "num_03")
+    clips = [audio.Bank().get(f"voice_{k}") for k in ("level_word", "num_03")]
+    assert s.speaking and len(s.mixer._voice.x) >= sum(len(c) for c in clips)
+
+
+def test_saying_nothing_cuts_the_voice_off():
+    s = make()
+    s.say("level_clear")
+    assert s.speaking
+    s.say()
+    assert not s.speaking and s.mixer._voice is None and ("say", ()) in s.log
+
+
 def test_a_voice_line_speaks_and_a_new_one_replaces_it():
     s = make()
-    s.say("title")
-    assert s.speaking and ("say", ("title",)) in s.log
+    s.say("level_clear")
+    assert s.speaking and ("say", ("level_clear",)) in s.log
+    s.say("continue")
+    assert ("say", ("continue",)) in s.log
     s.say("level_clear")
     assert ("say", ("level_clear",)) in s.log
 
 
 def test_a_level_announcement_joins_level_number_and_name():
     s = make()
-    s.say(*voicelines.level_intro(3))
-    clips = [audio.Bank().get(f"voice_{k}") for k in voicelines.level_intro(3)]
+    s.say(*level_say(3))
+    clips = [audio.Bank().get(f"voice_{k}") for k in level_say(3)]
     assert s.mixer._voice is not None
     assert len(s.mixer._voice.x) >= sum(len(c) for c in clips)
 
 
 def test_music_starts_switches_and_stops():
     s = make()
-    s.music("title")
-    assert s._music_name == "title" and s.mixer._music is not None
     s.music("game")
-    assert s._music_name == "game"
+    assert s._music_name == "game" and s.mixer._music is not None
     s.music(None)
     assert s._music_name is None
 
@@ -80,7 +96,7 @@ def test_a_muted_game_makes_no_sound_and_loads_nothing():
     s = make(enabled=False)
     s.music("game")
     s.sfx("explode")
-    s.say("title")
+    s.say("level_clear")
     assert s.log == [] and s.mixer.active_effects == 0 and not s.speaking and s.mixer._music is None
 
 

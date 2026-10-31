@@ -55,7 +55,10 @@ def crosshair_in(res):
 pump(0.5)
 win.reveal(10)
 pump(2.5)  # past the 750 ms fade-in
-next(w for w in app.app.findChildren(Button) if w.text == "LAUNCH").clicked.emit()
+from overblaster.core import LAUNCH  # noqa: E402
+app._press_box(LAUNCH)
+pump(0.5)
+app.game.begin_game()  # straight into level 1: the playfield draws the crosshair at the mouse
 pump(1.0)
 
 overlay = win._gaze_overlay

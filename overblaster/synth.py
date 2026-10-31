@@ -344,3 +344,72 @@ def render_music(kind: str) -> np.ndarray:
     out[:seam] *= np.linspace(0.0, 1.0, seam)
     out[-seam:] *= np.linspace(1.0, 0.0, seam)
     return peak_normalise(out, 0.9 if drive else 0.4)  # the title is a pad with few peaks: lower, so it is calmer
+
+
+# ----- the web game's synthesised effects (OverBlaster-web src/platform/audio.ts), as numpy clips -----
+ALARM_S = 5.0  # 11 cycles of the 2.2 Hz pulse and 3700 of the 740 Hz tone: a whole number of both, so it loops seamlessly
+DRONE_S = 10.0  # whole cycles of 55, 82.4 and 110.3 Hz (550, 824 and 1103)
+DRONE_GAIN, DRONE_ATTACK_TAU, DRONE_RELEASE_TAU = 0.07, 1.2, 0.4  # the loop's level, and how fast it comes in and goes out
+
+
+def _sweep(kind: str, f0: float, f1: float, dur: float, vol: float) -> np.ndarray:
+    """An oscillator gliding exponentially from f0 to f1 while its gain falls exponentially from vol to 0.001; it is
+    stopped 20 ms after the glide ends (a WebAudio exponentialRampToValueAtTime pair, which is what the web plays)."""
+    n = int((dur + 0.02) * SR)
+    t = np.arange(n) / SR
+    u = np.clip(t / dur, 0.0, 1.0)
+    freq = f0 * (f1 / f0) ** u
+    wave = (dsp.saw if kind == "sawtooth" else dsp.square)(freq, n)
+    return wave * vol * (0.001 / vol) ** u
+
+
+def _burst(dur: float, vol: float, seed: int) -> np.ndarray:
+    """Noise through a 1.5 kHz highpass with an exponential decay."""
+    n = int((dur + 0.02) * SR)
+    u = np.clip(np.arange(n) / SR / dur, 0.0, 1.0)
+    return highpass(noise(n, seed), 1500.0) * vol * (0.001 / vol) ** u
+
+
+def render_zap(kind: str) -> np.ndarray:
+    """"eject" (a rock spits out a bad gauge), "bad" (you took one) or "pop"."""
+    parts = []  # (delay s, samples)
+    if kind == "eject":
+        gain = 0.5
+        parts = [(0.0, _sweep("square", 1000, 620, 0.07, 0.3)), (0.11, _sweep("square", 1000, 620, 0.07, 0.3)), (0.0, _burst(0.18, 0.25, 11))]
+    elif kind == "bad":
+        gain = 0.9
+        parts = [(0.0, _sweep("sawtooth", 760, 40, 1.0, 0.5)), (0.0, _sweep("square", 190, 38, 1.0, 0.35)), (0.15, _sweep("square", 95, 30, 0.8, 0.3)), (0.0, _burst(0.6, 0.45, 12))]
+    elif kind == "pop":
+        gain = 0.6
+        parts = [(0.0, _sweep("square", 1500, 260, 0.12, 0.3)), (0.0, _burst(0.12, 0.3, 13))]
+    else:
+        raise KeyError(kind)
+    out = np.zeros(max(int(d * SR) + len(x) for d, x in parts))
+    for d, x in parts:
+        place(out, x, d)
+    return (out * gain).astype(np.float32)
+
+
+def render_alarm() -> np.ndarray:
+    """The red-alert loop: a 740 Hz square tone whose gain a 2.2 Hz square wave switches between 0 and 0.07."""
+    n = int(ALARM_S * SR)
+    t = np.arange(n) / SR
+    lfo = np.where((t * 2.2) % 1.0 < 0.5, 1.0, -1.0)
+    return (dsp.square(740.0, n) * (0.035 + 0.035 * lfo)).astype(np.float32)
+
+
+def render_drone() -> np.ndarray:
+    """The engine drone loop (unit level; the player fades it in at DRONE_GAIN): 55 Hz triangle + two sines."""
+    n = int(DRONE_S * SR)
+    tri = 2.0 / np.pi * np.arcsin(np.clip(np.sin(2 * np.pi * np.cumsum(np.full(n, 55.0)) / SR), -1.0, 1.0))
+    return (0.6 * tri + 0.35 * dsp.sine(82.4, n) + 0.35 * dsp.sine(110.3, n)).astype(np.float32)
+
+
+# what Bank.get builds on demand for names that have no WAV
+GENERATED = {
+    "zap_eject": lambda: render_zap("eject"),
+    "zap_bad": lambda: render_zap("bad"),
+    "zap_pop": lambda: render_zap("pop"),
+    "loop_alarm": render_alarm,
+    "loop_drone": render_drone,
+}

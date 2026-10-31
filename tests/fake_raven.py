@@ -116,6 +116,9 @@ class RavenApp:
     def keyPressEvent(self, event):
         self.unhandled_key = event.text()
 
+    def closeEvent(self, event):
+        self.closed = True
+
 
 class Routine:
     def __init__(self, interval_ms, invoke, mode="repeat", parent=None):

@@ -9,74 +9,20 @@ DISPLAY_PX = 640
 FOV_DEG = 30.0  # diagonal field of view of the waveguide
 
 # --- Timing --------------------------------------------------------------
-TICK_HZ = 15  # game update rate; kept low to save battery
+# One tick runs the core and repaints the whole scene (a QPainter picture of everything on screen), so the rate is the
+# battery dial. Measured on a MacBook Air (tools/bench_tick.py, 640 px): a gameplay frame paints in 2-5 ms, the busiest
+# intro frames in about 8 ms, and the core takes well under 1 ms, so even 20 Hz uses under a fifth of its 50 ms budget;
+# 20 Hz makes the sky and the bolts visibly smoother than 15. The glasses' board is slower and has not been measured:
+# if it cannot keep up, or the battery drain matters more, run with OVERBLASTER_TICK_HZ=15 (or 12).
+TICK_HZ = int(os.environ.get("OVERBLASTER_TICK_HZ", 20))
 TICK_MS = int(1000 / TICK_HZ)
 
-# --- World space (degrees) ----------------------------------------------
-EL_LIMIT = 20.0  # worlds stay within +/- this elevation (the vertical field of view is only +/- 15)
-SPAWN_SPREAD = 45.0  # worlds spawn within +/- this azimuth of where the player looks (the view is only 30 wide)
-SPAWN_APPROACH = 0.0  # approach progress at spawn (0 = far away, 1 = hits the ship)
-
-# --- HUD ------------------------------------------------------------------
-# Announced by the banner when a level starts, and shown nowhere else. Level 6 and beyond keep the last one.
-LEVEL_NAMES = ("OUTER RIM", "ASTEROID BELT", "NEBULA GATE", "VOID STORM", "EVENT HORIZON", "DEEP SPACE")
+# --- Dwell buttons ---------------------------------------------------------
+DWELL_S = 1.5  # rest the gaze on LAUNCH, RETRY, TITLE or SKIP STORY this long to press it (the framework Button's own default)
 
 
-def level_name(level: int) -> str:
-    return LEVEL_NAMES[max(0, min(level, len(LEVEL_NAMES)) - 1)]
-
-
-# --- Rogue Worlds --------------------------------------------------------
-WORLD_KINDS = ("a", "b", "c")
-# At about 21 px per degree, 3.0 degrees of radius is the 128 px sprite size, so the
-# artwork is never upscaled. Worlds are drawn at one of WORLD_BANDS (px); MediaViewer
-# is fixed-size and reloads on resize, so the sprite is swapped at the band edges
-# (see view.size_class). These must match the GIFs made by tools/prep_assets.py.
-WORLD_BANDS = (64, 96, 128)
-WORLD_MIN_RADIUS = 1.0  # angular radius at spawn (far away)
-WORLD_MAX_RADIUS = 3.0  # angular radius when about to hit the ship
-HIT_FORGIVENESS = 1.5  # hit radius = visual radius * this (sprites are drawn in size bands, so a bit generous)
-APPROACH_SECONDS = 100.0  # seconds to reach the ship at level 1. A world that arrives ends the game, so
-#                          head-turning players need real time to find and kill every one
-APPROACH_SPEEDUP = 0.12  # +12 % speed per level
-DRIFT_DEG_PER_S = 2.5  # max sideways drift speed at level 1
-KNOCKBACK = 0.0015  # each hit pushes a world back this far; at 10 hits a second it must stay small
-WORLDS_BASE = 5
-WORLD_HP_BASE = 6  # hits to destroy a world at level 1
-WORLD_HP_PER_LEVEL = 1  # and one more each level
-CARRIER_EXTRA_HP = 4  # the chip carrier is tougher still
-WORLDS_PER_LEVEL = 2
-MAX_WORLDS_ON_SCREEN = 8  # also the size of the widget pool
-
-# --- Battery -------------------------------------------------------------
-BATTERY_START = 100.0
-SHOT_COST = 1.0
-CRYSTAL_VALUE = 3.0
-SHOT_FX_S = 0.5  # how long a shot's animation is kept (the longest effect, a kill's explosion)
-SHOT_COOLDOWN_S = 0.10  # 10 shots a second
-
-# --- Crystals ------------------------------------------------------------
-CRYSTALS_MIN, CRYSTALS_MAX = 3, 5  # crystals dropped when a world is destroyed
-MAX_CRYSTALS_ON_SCREEN = 6
-CRYSTAL_LIFETIME_S = 9.0  # seconds before an uncollected crystal drifts away
-CRYSTAL_RADIUS = 3.0  # harvest radius in degrees
-HARVEST_DWELL_S = 0.30  # crosshair must stay on a crystal this long
-HARVEST_DECAY = 2.0  # dwell drains this much faster than it fills when aim leaves
-
-# --- Overlord Battery Gauge Chip ----------------------------------------
-CHIP_LEVEL = 3  # first level with a chip carrier world (after 2 clear levels); it returns each level until the chip is collected
-CHIP_REPEAT = False  # True = another chip every CHIP_LEVEL levels
-CHIP_CAPACITY_FACTOR = 2.0
-CHIP_LIFETIME_S = 18.0
-CHIP_HOLD_S = 2.4  # the Overlord BMS has to be held in your aim this long, not just glanced at
-CHIP_HOLD_DRAIN = 0.2  # a slip drains this fraction of the hold per second (a fifth of the fill speed), and never resets it
-
-# --- Scoring -------------------------------------------------------------
-SCORE_HIT = 20
-SCORE_DESTROY = 500
-SCORE_CRYSTAL = 50
-SCORE_CHIP = 1000
-INTERMISSION_S = 2.0
+# The rules (worlds, rocks, battery, crystals, the BMS chip, wings, levels, scoring) live in overblaster/core/constants.py
+# and overblaster/core/levels.py: a port of the web game's core, which is the source of truth for the game's design.
 
 # --- Voice trigger ("Pew") ----------------------------------------------
 # Any sound counts; only the volume matters. Levels are 0.0 - 1.0.

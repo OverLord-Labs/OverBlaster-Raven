@@ -3,6 +3,9 @@
     .venv/bin/python tools/make_audio.py
 
 Edit overblaster/synth.py and run this again to change a sound.
+
+The web game (OverBlaster-web) is now the source of truth for the clips in assets/audio: tools/sync_web_audio.py
+copies them in. This script would overwrite them with the old Raven-only sounds, so it needs --force.
 """
 
 import os
@@ -27,6 +30,8 @@ def write(name, x):
 
 
 def main():
+    if "--force" not in sys.argv:
+        sys.exit("assets/audio now comes from the web game (tools/sync_web_audio.py). Pass --force to overwrite it with the old synth sounds.")
     print("sound effects")
     for name in synth.SFX:
         write("sfx_" + name, synth.render_sfx(name))
@@ -34,7 +39,6 @@ def main():
         write(f"sfx_charge_{i}", synth.peak_normalise(synth.charge_tick(i), 0.7))
     print("music")
     write("music_game", synth.render_music("game"))
-    write("music_title", synth.render_music("title"))
 
 
 if __name__ == "__main__":

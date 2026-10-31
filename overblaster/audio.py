@@ -17,9 +17,11 @@ from typing import Deque, Dict, List, Optional
 import numpy as np
 
 from . import config as C
+from . import synth
 from .synth import SR, to_int16
 
 MAX_EFFECTS = 8
+LOOP_DROP = 0.02  # a loop that is fading out is dropped once it is below this fraction of its level
 VOICE_TAIL_S = 0.15  # the room keeps ringing a moment after a voice line ends
 LEVEL_WINDOW_S = 0.3  # the mic hears what was played a little earlier, so level looks back this far
 ECHO_K0 = 0.5  # until it has learned, assume the mic hears half of what is played
@@ -59,8 +61,20 @@ def join(clips: List[np.ndarray], gap: float = 0.08) -> np.ndarray:
 class _Clip:
     __slots__ = ("x", "pos", "gain")
 
-    def __init__(self, x: np.ndarray, gain: float) -> None:
-        self.x, self.pos, self.gain = x, 0, gain
+    def __init__(self, x: np.ndarray, gain: float, pos: int = 0) -> None:
+        self.x, self.pos, self.gain = x, pos, gain
+
+
+class _Loop:
+    """A looping effect (the alarm, the drone) that fades toward a target level: exponentially, like a
+    WebAudio setTargetAtTime. tau 0 jumps. Once told to stop it is dropped when it has all but faded out."""
+
+    __slots__ = ("x", "pos", "gain", "level", "target", "tau")
+
+    def __init__(self, x: np.ndarray, gain: float, tau: float) -> None:
+        self.x, self.pos, self.gain, self.tau = x, 0, gain, tau
+        self.target = 1.0
+        self.level = 0.0 if tau > 0 else 1.0
 
 
 class Mixer:
@@ -74,6 +88,7 @@ class Mixer:
         self._music_rate = 1.0  # level change per second
         self._duck_level = 1.0
         self._effects: List[_Clip] = []
+        self._loops: Dict[str, _Loop] = {}
         self._voice: Optional[_Clip] = None
         self._voice_end = -1e9  # in rendered seconds
         self._clock = 0.0
@@ -94,17 +109,45 @@ class Mixer:
         if fade_s <= 0:
             self._music_level = 1.0
 
-    def play(self, x: np.ndarray, gain: float = 1.0, voice: bool = False) -> None:
+    def play(self, x: np.ndarray, gain: float = 1.0, voice: bool = False, offset: float = 0.0) -> _Clip:
+        """Play a clip once, starting `offset` seconds into it. Returns a handle for stop()."""
+        pos = min(len(x), max(0, int(offset * SR)))
         if voice:
-            self._voice = _Clip(x, gain * self.voice_gain)
-            self._voice_end = self._clock + len(x) / SR + VOICE_TAIL_S
-        else:
-            self._effects.append(_Clip(x, gain * self.sfx_gain))
-            del self._effects[:-MAX_EFFECTS]
+            self._voice = _Clip(x, gain * self.voice_gain, pos)
+            self._voice_end = self._clock + (len(x) - pos) / SR + VOICE_TAIL_S
+            return self._voice
+        clip = _Clip(x, gain * self.sfx_gain, pos)
+        self._effects.append(clip)
+        del self._effects[:-MAX_EFFECTS]
+        return clip
+
+    def stop(self, clip: Optional[_Clip]) -> None:
+        """Cut a clip that play() returned (a no-op if it has already finished)."""
+        if clip is not None and clip in self._effects:
+            self._effects.remove(clip)
 
     def stop_voice(self) -> None:
         self._voice = None
         self._voice_end = self._clock
+
+    def start_loop(self, key: str, x: np.ndarray, gain: float = 1.0, attack_tau: float = 0.0) -> None:
+        """Start (or restart) a loop. It reaches `gain` with time constant `attack_tau` seconds (0 = at once)."""
+        self.stop_loop(key)
+        self._loops[key] = _Loop(x, gain * self.sfx_gain, attack_tau)
+
+    def stop_loop(self, key: str, release_tau: float = 0.0) -> None:
+        """Stop a loop: at once, or fading out with time constant `release_tau` seconds."""
+        lp = self._loops.get(key)
+        if lp is None:
+            return
+        if release_tau <= 0:
+            del self._loops[key]
+        else:
+            lp.target, lp.tau = 0.0, release_tau
+
+    def loop_running(self, key: str) -> bool:
+        lp = self._loops.get(key)
+        return lp is not None and lp.target > 0
 
     @property
     def active_effects(self) -> int:
@@ -149,6 +192,15 @@ class Mixer:
             self._voice.pos += n
             if self._voice.pos >= len(self._voice.x):
                 self._voice = None
+        for key, lp in list(self._loops.items()):
+            idx = (lp.pos + np.arange(n)) % len(lp.x)
+            lp.pos = int((lp.pos + n) % len(lp.x))
+            l0 = lp.level
+            l1 = lp.target + (l0 - lp.target) * float(np.exp(-dt / lp.tau)) if lp.tau > 0 else lp.target
+            lp.level = l1
+            out += lp.x[idx] * np.linspace(l0, l1, n) * lp.gain
+            if lp.target == 0.0 and l1 < LOOP_DROP:
+                del self._loops[key]
         out = np.tanh(out * self.master)
         out = np.clip(out, -1.0, 1.0).astype(np.float32)
         self._clock += dt
@@ -192,7 +244,7 @@ ASSET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 
 class Bank:
-    """Loads WAVs from assets/audio on first use and keeps them."""
+    """Loads WAVs from assets/audio on first use and keeps them. Names in synth.GENERATED (zap_*, loop_*) are synthesised instead."""
 
     def __init__(self, folder: str = ASSET_DIR) -> None:
         self.folder = folder
@@ -201,5 +253,10 @@ class Bank:
     def get(self, name: str) -> Optional[np.ndarray]:
         if name not in self._cache:
             path = os.path.join(self.folder, name + ".wav")
-            self._cache[name] = load_wav(path) if os.path.exists(path) else None
+            if os.path.exists(path):
+                self._cache[name] = load_wav(path)
+            elif name in synth.GENERATED:  # the web game's synthesised effects: built here, never stored
+                self._cache[name] = synth.GENERATED[name]()
+            else:
+                self._cache[name] = None
         return self._cache[name]
